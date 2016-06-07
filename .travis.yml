@@ -1,0 +1,8 @@
+language: cpp
+
+sudo: false # only for faster builds
+
+compiler:
+- gcc
+os:
+- osx
