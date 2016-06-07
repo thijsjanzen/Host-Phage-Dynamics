@@ -7,6 +7,7 @@
 //
 
 #include "./randomc.h"
+#include "./GetParams.h"
 
 #include <iostream>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <random>
 #include <string>
+#include <algorithm>  // std::remove_if & std::shuffle
 #include <unistd.h>
 
 
@@ -26,7 +28,7 @@ double sum(const std::vector<T>& v) {
 
 class Host {
  public:
-    double reproduction_limit;
+    int reproduction_limit;
     double R;  // resources
     double P;  // number of phages residing inside the host
     double lysisTimeOfPhage;  // type of phage that infected the host
@@ -52,7 +54,7 @@ class Host {
         infected = false;
     }
 
-    Host(double initR, double maxR):
+    Host(double initR, int maxR):
         R(initR), reproduction_limit(maxR) {
         P = 0;
         remainingLysisTime = 1e6;
@@ -82,6 +84,14 @@ class Host {
         reproduction_limit = other.reproduction_limit;
     }
 };
+
+
+void macstart(const char * argv[]);
+void writeOutput(const std::vector< Host >& HostPopulation,
+                 const std::vector< int > Phages,
+                 int t,
+                 int numberOfPhages);
+
 
 void Host::updatePhages(double PhageGrowthRate,
                         std::vector< int >* Phages,
@@ -116,7 +126,7 @@ void Host::updatePhages(double PhageGrowthRate,
 
 void Host::maintain(double maintenance) {
     // float precision should be enough and is faster
-    double loss = maintenance *  powf(static_cast<float>(1+R), 0.75f);
+    double loss = maintenance;  // *  powf(static_cast<float>(1+R), 0.75f);
     R -= loss;
     if (R <= 0.0) {
         dead = true;
@@ -146,7 +156,7 @@ void Host::infection(std::vector< int >* Phages,
             r  += random_number(*numberOfPhages);
         }
 
-        for (int i = 0; i < Phages->size(); ++i) {
+        for (std::size_t i = 0; i < Phages->size(); ++i) {
             r -= (*Phages)[i];
             if (r <= 0) {
                 lysisTime = i;
@@ -193,21 +203,31 @@ void update(int HostPopulationSize,
 
         // double prob = 1.0 * (*it).R/ (*it).reproduction_limit;
         // prob *= prob;
-        double prob = expf(-0.5 * ((*it).reproduction_limit - (*it).R));
-        if (uniform() < prob)    {
+         double prob = expf(-0.5 * ((*it).reproduction_limit - (*it).R));
+
+         if (uniform() < prob)    {
+       // if ( (*it).R >= (*it).reproduction_limit) {
             (*it).R *= 0.5;
             Host copy = (*it);
             if (uniform() < 0.05) {
-                copy.reproduction_limit += normal(0.0, 1);
+                copy.reproduction_limit += normal(0.0, 3);
+                /*if(uniform() < 0.5) {
+                    copy.reproduction_limit++;
+                } else {
+                    copy.reproduction_limit--;
+                }*/
+
                 if (copy.reproduction_limit < 1) copy.reproduction_limit = 1;
             }
             toAdd->push_back(copy);
         }
 
-        (*it).infection(Phages,
+        if (numberOfPhages > 0) {
+            (*it).infection(Phages,
                         HostPopulationSize,
                         infectProbability,
                         numberOfPhages);
+        }
     }
     return;
 }
@@ -245,35 +265,9 @@ void decayPhages(std::vector< int >* Phages,
 }
 
 
-void macstart(const char * argv[]);
-void writeOutput(const std::vector< Host >& HostPopulation,
-                 const std::vector< int > Phages,
-                 int t,
-                 int numberOfPhages);
 
-
-int main(int argc, const char * argv[]) {
-    // apple specific code making sure that
-    // we are in the same directory as the executable
-    macstart(argv);
-
-    // initial host population size
-    int HostN = 1e2;
-    // size of host at which it reproduces
-    double maxR = 20;
-    double maintenance = 0.1;
-    double PhageGrowthRate = 1;
-    double infectionProbability = 1e-9;
-    double phageDecay = 0.1;
-
-    // influx of the chemostat
-    double Inflow = 1e3;
-    double Resources = 0;
-
-    int maxT = 1e7;
-    // time at which the phages are introduced
-    int critT = 1e9;
-
+void doSimulation(GetParams Params)
+{
     std::random_device rdev;
     unsigned int chosen_seed = rdev();
     // we only use the "standard" random number generator for std::shuffle
@@ -283,18 +277,18 @@ int main(int argc, const char * argv[]) {
     // using code from Agner Fog:  www.agner.org/random
     set_seed(chosen_seed);
 
-    // population of hosts
     std::vector< Host > HostPopulation;
+    double Resources = 0;
 
     // temporary vector containing newly born hosts
     std::vector< Host > toAdd;
 
     // vector of the histogram of Phages
-    std::vector < int > Phages(maxR*4, 0);
+    std::vector < int > Phages(Params.reproductionSize * 4, 0);
 
     // we initialize a population of N individuals
     // that each have a minimum amount of resources already
-    HostPopulation.resize(HostN, Host(maintenance * 10, maxR));
+    HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
 
     // clear the output files
     std::ofstream outFile_temp("output.txt");
@@ -303,13 +297,11 @@ int main(int argc, const char * argv[]) {
     std::ofstream outFile_temp3("output_phages.txt");
     outFile_temp3.close();
 
-    std::clock_t start = clock();
-
     int numberOfPhages = 0;
     // the maximum time is quite arbitrary
-    for (int t = 0; t < maxT; t++) {
+    for (int t = 0; t < Params.maxTime; t++) {
         // add resources
-        Resources += Inflow;
+        Resources += Params.Inflow;
         toAdd.clear();
         // allocate plenty of memory
         // (this vector will hold all new additions to the population)
@@ -319,18 +311,18 @@ int main(int argc, const char * argv[]) {
         std::shuffle(HostPopulation.begin(), HostPopulation.end(), urng);
 
         for (auto it = HostPopulation.begin();
-                  it != HostPopulation.end(); ++it) {
+             it != HostPopulation.end(); ++it) {
             update(static_cast<int>(HostPopulation.size()),
                    it, &toAdd, &Resources,
-                   maintenance, infectionProbability,
-                   &Phages, PhageGrowthRate, &numberOfPhages);
+                   Params.maintenanceCost, Params.infectionProbability,
+                   &Phages, Params.phageGrowthRate, &numberOfPhages);
         }
 
         removeDeadAddKids(&HostPopulation, &toAdd);
 
-        decayPhages(&Phages, phageDecay, &numberOfPhages);
+        decayPhages(&Phages, Params.phageDecayRate, &numberOfPhages);
 
-        if (t == critT) {
+        if (t == Params.infectionTime) {
             int maxMaxr = 0;
             for (std::size_t i = 0; i < HostPopulation.size(); ++i) {
                 if (HostPopulation[i].reproduction_limit > maxMaxr)
@@ -350,16 +342,21 @@ int main(int argc, const char * argv[]) {
             break;
         }
     }
-
+    
     HostPopulation.clear();
     Phages.clear();
+}
 
-    std::clock_t end = clock();
 
-    std::cout << "Time taken: " << "\t"
-              << static_cast<double>((end - start)/CLOCKS_PER_SEC)
-              << "\n";
+int main(int argc, const char * argv[]) {
+    // apple specific code making sure that
+    // we are in the same directory as the executable
+    macstart(argv);
 
+    GetParams Params;
+    Params.readFromIni("config.ini");
+
+    doSimulation(Params);
     return 0;
 }
 
@@ -374,6 +371,8 @@ void writeOutput(const std::vector< Host >& HostPopulation,
     double minMaxr = 1e6;
     double maxMaxr = -1;
 
+    std::vector< int > hostHistogram(1000,0);
+
     for (auto it = HostPopulation.begin(); it != HostPopulation.end(); ++it) {
         meanResources += (*it).R;
         meanMaxR += (*it).reproduction_limit;
@@ -381,6 +380,8 @@ void writeOutput(const std::vector< Host >& HostPopulation,
             maxMaxr = (*it).reproduction_limit;
         if ((*it).reproduction_limit < minMaxr)
             minMaxr = (*it).reproduction_limit;
+
+        hostHistogram[ static_cast<int>((*it).reproduction_limit)]++;
     }
     meanResources = 1.0 * meanResources / HostPopulation.size();
     meanMaxR = 1.0 * meanMaxR / HostPopulation.size();
@@ -404,11 +405,21 @@ void writeOutput(const std::vector< Host >& HostPopulation,
 
     std::ofstream outFile_Phages("output_phages.txt", std::ios::app);
     outFile_Phages << t << "\t";
-    for (int i = 0; i < Phages.size(); ++i) {
+    for (std::size_t i = 0; i < Phages.size(); ++i) {
         outFile_Phages << Phages[i] << "\t";
     }
     outFile_Phages << "\n";
     outFile_Phages.close();
+
+
+    std::ofstream outFile_Hosts("output_hosts.txt",std::ios::app);
+    outFile_Hosts << t << "\t";
+    for(auto it  = hostHistogram.begin();
+        it != hostHistogram.end(); ++it)    {
+            outFile_Hosts << (*it) << "\t";
+    }
+    outFile_Hosts << "\n";
+    outFile_Hosts.close();
 }
 
 void macstart(const char * argv[])  {
