@@ -90,7 +90,8 @@ void macstart(const char * argv[]);
 void writeOutput(const std::vector< Host >& HostPopulation,
                  const std::vector< int > Phages,
                  int t,
-                 int numberOfPhages);
+                 int numberOfPhages,
+                 int numDivisions);
 
 
 void Host::updatePhages(double PhageGrowthRate,
@@ -159,7 +160,7 @@ void Host::infection(std::vector< int >* Phages,
         for (std::size_t i = 0; i < Phages->size(); ++i) {
             r -= (*Phages)[i];
             if (r <= 0) {
-                lysisTime = i;
+                lysisTime = static_cast<int>(i);
                 break;
             }
         }
@@ -182,7 +183,8 @@ void update(int HostPopulationSize,
             double infectProbability,
             std::vector< int >* Phages,
             double PhageGrowthRate,
-            int* numberOfPhages)    {
+            int* numberOfPhages,
+            int* numDivisions)    {
     if ((*it).dead) return;
 
 
@@ -201,21 +203,19 @@ void update(int HostPopulationSize,
         (*it).R         += uptake;
         *Resources       -= uptake;
 
-        // double prob = 1.0 * (*it).R/ (*it).reproduction_limit;
-        // prob *= prob;
          double prob = expf(-0.5 * ((*it).reproduction_limit - (*it).R));
 
          if (uniform() < prob)    {
        // if ( (*it).R >= (*it).reproduction_limit) {
+            (*numDivisions)++;
             (*it).R *= 0.5;
             Host copy = (*it);
             if (uniform() < 0.05) {
-                copy.reproduction_limit += normal(0.0, 3);
-                /*if(uniform() < 0.5) {
-                    copy.reproduction_limit++;
+                if(random_number(2) == 0) {
+                    copy.reproduction_limit++;//= Expon(1);
                 } else {
-                    copy.reproduction_limit--;
-                }*/
+                    copy.reproduction_limit--;//= Expon(1);
+                }
 
                 if (copy.reproduction_limit < 1) copy.reproduction_limit = 1;
             }
@@ -288,7 +288,13 @@ void doSimulation(GetParams Params)
 
     // we initialize a population of N individuals
     // that each have a minimum amount of resources already
-    HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
+    // HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
+    for(std::size_t i = 0; i < Params.initHostPopSize; ++i) {
+        Host init = Host(Params.maintenanceCost*10, 5+random_number(Params.reproductionSize-5));
+        HostPopulation.push_back(init);
+    }
+
+
 
     // clear the output files
     std::ofstream outFile_temp("output.txt");
@@ -310,12 +316,15 @@ void doSimulation(GetParams Params)
         // shuffle all individuals
         std::shuffle(HostPopulation.begin(), HostPopulation.end(), urng);
 
+        int numDivisions = 0;
+
         for (auto it = HostPopulation.begin();
              it != HostPopulation.end(); ++it) {
             update(static_cast<int>(HostPopulation.size()),
                    it, &toAdd, &Resources,
                    Params.maintenanceCost, Params.infectionProbability,
-                   &Phages, Params.phageGrowthRate, &numberOfPhages);
+                   &Phages, Params.phageGrowthRate, &numberOfPhages,
+                   &numDivisions);
         }
 
         removeDeadAddKids(&HostPopulation, &toAdd);
@@ -336,7 +345,9 @@ void doSimulation(GetParams Params)
             }
         }
 
-        if (t % 10 == 0) writeOutput(HostPopulation, Phages, t, numberOfPhages);
+        int stepSize = 1;
+
+        if (t % stepSize == 0) writeOutput(HostPopulation, Phages, t, numberOfPhages, numDivisions);
 
         if (HostPopulation.size() < 1) {
             break;
@@ -363,7 +374,8 @@ int main(int argc, const char * argv[]) {
 void writeOutput(const std::vector< Host >& HostPopulation,
                  const std::vector< int > Phages,
                  int t,
-                 int numberOfPhages) {
+                 int numberOfPhages,
+                 int numDivisions) {
     int numberOfHosts = static_cast<int>(HostPopulation.size());
 
     double meanResources = 0.0;
@@ -399,22 +411,25 @@ void writeOutput(const std::vector< Host >& HostPopulation,
                              << numberOfPhages << "\t"
                              << meanMaxR << "\t"
                              << minMaxr << "\t"
-                             << maxMaxr << "\n";
+                             << maxMaxr << "\t"
+                             << numDivisions << "\n";
     }
     outFile.close();
 
-    std::ofstream outFile_Phages("output_phages.txt", std::ios::app);
-    outFile_Phages << t << "\t";
-    for (std::size_t i = 0; i < Phages.size(); ++i) {
-        outFile_Phages << Phages[i] << "\t";
+    if (numberOfPhages > 0) {
+        std::ofstream outFile_Phages("output_phages.txt", std::ios::app);
+        outFile_Phages << t << "\t";
+        for (std::size_t i = 0; i < Phages.size(); ++i) {
+            outFile_Phages << Phages[i] << "\t";
+        }
+        outFile_Phages << "\n";
+        outFile_Phages.close();
     }
-    outFile_Phages << "\n";
-    outFile_Phages.close();
 
 
     std::ofstream outFile_Hosts("output_hosts.txt",std::ios::app);
     outFile_Hosts << t << "\t";
-    for(auto it  = hostHistogram.begin();
+    for (auto it  = hostHistogram.begin();
         it != hostHistogram.end(); ++it)    {
             outFile_Hosts << (*it) << "\t";
     }

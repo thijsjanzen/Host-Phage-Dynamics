@@ -37,9 +37,9 @@ class GetParams {
     double Inflow;
     double Resources;
 
-    int maxTime;
+    double maxTime;
     // time at which the phages are introduced
-    int infectionTime;
+    double infectionTime;
 };
 
 #endif  // FINITE_CHROMOSOME_ALWAYS_RECOM_GETPARAMS_H_
