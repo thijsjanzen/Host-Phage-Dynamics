@@ -55,7 +55,7 @@ class Host {
     }
 
     Host(double initR, int maxR):
-        R(initR), reproduction_limit(maxR) {
+        reproduction_limit(maxR), R(initR)  {
         P = 0;
         remainingLysisTime = 1e6;
         lysisTimeOfPhage = -1;
