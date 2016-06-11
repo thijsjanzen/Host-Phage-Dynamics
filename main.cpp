@@ -127,7 +127,8 @@ void Host::updatePhages(double PhageGrowthRate,
 
 void Host::maintain(double maintenance) {
     // float precision should be enough and is faster
-    double loss = maintenance;  // *  powf(static_cast<float>(1+R), 0.75f);
+  //  double loss = maintenance;
+    double loss = maintenance; //  *  powf(static_cast<float>(1+R), 0.75f);
     R -= loss;
     if (R <= 0.0) {
         dead = true;
@@ -171,7 +172,7 @@ void Host::infection(std::vector< int >* Phages,
         lysisTimeOfPhage = lysisTime;
         remainingLysisTime = lysisTime;
         (*Phages)[lysisTime]--;
-        numberOfPhages--;
+        (*numberOfPhages)--;
     }
 }
 
@@ -203,7 +204,7 @@ void update(int HostPopulationSize,
         (*it).R         += uptake;
         *Resources       -= uptake;
 
-         double prob = expf(-0.5 * ((*it).reproduction_limit - (*it).R));
+         double prob = expf(-1.0 * ((*it).reproduction_limit - (*it).R));
 
          if (uniform() < prob)    {
        // if ( (*it).R >= (*it).reproduction_limit) {
@@ -222,7 +223,7 @@ void update(int HostPopulationSize,
             toAdd->push_back(copy);
         }
 
-        if (numberOfPhages > 0) {
+        if ((*numberOfPhages) > 0) {
             (*it).infection(Phages,
                         HostPopulationSize,
                         infectProbability,
@@ -264,16 +265,23 @@ void decayPhages(std::vector< int >* Phages,
     }
 }
 
+// this is a custom shuffle function that uses the
+// Agner Fog random number generator
+// it is ~5x faster than the std::shuffle
+void customShuffle(std::vector< Host >::iterator first,
+                   int size) {
+    for(int i = size-1; i > 0; --i) {
+        std::swap(first[i], first[random_number(i)]);
+    }
+}
 
 
 void doSimulation(GetParams Params)
 {
     std::random_device rdev;
     unsigned int chosen_seed = rdev();
-    // we only use the "standard" random number generator for std::shuffle
-    std::mt19937 urng(chosen_seed);
 
-    // all other random numbers are generated
+    // all random numbers are generated
     // using code from Agner Fog:  www.agner.org/random
     set_seed(chosen_seed);
 
@@ -288,12 +296,12 @@ void doSimulation(GetParams Params)
 
     // we initialize a population of N individuals
     // that each have a minimum amount of resources already
-    // HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
+  //  HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
     for(std::size_t i = 0; i < Params.initHostPopSize; ++i) {
-        Host init = Host(Params.maintenanceCost*10, 5+random_number(Params.reproductionSize-5));
+ //       Host init = Host(Params.maintenanceCost*3, 5+random_number(Params.reproductionSize-5));
+        Host init = Host(Params.maintenanceCost + uniform(), Params.reproductionSize - 2 + random_number(4));
         HostPopulation.push_back(init);
     }
-
 
 
     // clear the output files
@@ -314,7 +322,7 @@ void doSimulation(GetParams Params)
         toAdd.reserve(HostPopulation.size());
 
         // shuffle all individuals
-        std::shuffle(HostPopulation.begin(), HostPopulation.end(), urng);
+        customShuffle(HostPopulation.begin(), static_cast<int>(HostPopulation.size()));
 
         int numDivisions = 0;
 
@@ -345,7 +353,7 @@ void doSimulation(GetParams Params)
             }
         }
 
-        int stepSize = 1;
+        int stepSize = 100;
 
         if (t % stepSize == 0) writeOutput(HostPopulation, Phages, t, numberOfPhages, numDivisions);
 
@@ -436,6 +444,7 @@ void writeOutput(const std::vector< Host >& HostPopulation,
     outFile_Hosts << "\n";
     outFile_Hosts.close();
 }
+
 
 void macstart(const char * argv[])  {
     std::cout << "\n\n\n";
