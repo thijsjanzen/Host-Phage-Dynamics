@@ -18,13 +18,10 @@
 GetParams::GetParams() {
     seed = 1;
     initHostPopSize = 1e2;
+    initPhagePopSize = 0;
     // size of host at which it reproduces
     reproductionSize = 20;
     maintenanceCost = 0.1;
-
-    phageGrowthRate = 1;
-    phageDecayRate = 0.1;
-    infectionProbability = 1e-9;
 
     // influx of the chemostat
     Inflow = 1e3;
@@ -51,14 +48,20 @@ void GetParams::readFromIni(const char * filename ) {
     while (ss.good()) {
         readNameValuePair(ss,  "seed", seed);
         readNameValuePair(ss,  "initHostPopSize", initHostPopSize);
+        readNameValuePair(ss,  "initPhagePopSize", initPhagePopSize);
         readNameValuePair(ss,  "reproductionSize", reproductionSize);
         readNameValuePair(ss,  "maintenanceCost", maintenanceCost);
+        readNameValuePair(ss,  "H", H);
         readNameValuePair(ss,  "Inflow", Inflow);
         readNameValuePair(ss,  "maxTime", maxTime);
         readNameValuePair(ss,  "infectionTime", infectionTime);
-        readNameValuePair(ss,  "phageGrowthRate", phageGrowthRate);
-        readNameValuePair(ss,  "phageDecayRate", phageDecayRate);
-        readNameValuePair(ss,  "infectionProbability", infectionProbability);
+        readNameValuePair(ss,  "D",             D);
+        readNameValuePair(ss,  "omega", omega);
+        readNameValuePair(ss,  "gamma", gamma);
+        readNameValuePair(ss,  "lambda", lambda);
+        readNameValuePair(ss,  "beta", beta);
+        readNameValuePair(ss,  "alpha", alpha);
+
     }
 }
 

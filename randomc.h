@@ -204,7 +204,7 @@ void set_seed(int seed);
 double uniform();
 int random_number(int n);
 double normal(double m, double s);
-double Expon(double lambda);
+long double Expon(long double lambda);
 double Binom(int n, double p);
 
 

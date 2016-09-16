@@ -209,9 +209,10 @@ double normal(double m, double s)
 }
 
 
-double Expon(double lambda)
+long double Expon(long double lambda)
 {
-	return log(1 - rndgen.Random()) / (-1.0 * lambda);
+	long double answer =  log(1 - rndgen.Random()) / (-1.0 * lambda);
+    return answer;
 }
 
 double Binom(int n, double p)

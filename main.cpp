@@ -1,462 +1,416 @@
 //
 //  main.cpp
-//  Host-Phage
+//  Host_Gillespie
 //
-//  Created by Thijs Janzen on 30/05/16.
+//  Created by Thijs Janzen on 16/08/16.
 //  Copyright (c) 2016 Thijs Janzen. All rights reserved.
 //
 
-#include "./randomc.h"
-#include "./GetParams.h"
-
 #include <iostream>
+#include "randomc.h"
 #include <vector>
-#include <fstream>
 #include <cmath>
-#include <random>
-#include <string>
-#include <algorithm>  // std::remove_if & std::shuffle
-#include <unistd.h>
+#include <fstream>
+#include "GetParams.h"
+#include <unistd.h>  // for mac specific run code
+#include <time.h>
+#include <numeric>
+#include <algorithm>
 
+void macstart(const char * argv[]);  // forward declaration
 
+struct Host{
+    double Resource;
+    double reproProb;
+    double reproSize;
 
-template <class T>
-double sum(const std::vector<T>& v) {
-    double a = std::accumulate(v.begin(), v.end(), 0.0);
-    return a;
-}
-
-class Host {
- public:
-    int reproduction_limit;
-    double R;  // resources
-    double P;  // number of phages residing inside the host
-    double lysisTimeOfPhage;  // type of phage that infected the host
-    double remainingLysisTime;  // remaining time until lysis
-    bool dead;
-    bool infected;
-
-    void updatePhages(double PhageGrowthRate,
-                      std::vector< int >* Phages,
-                      int* numberOfPhages);
-    void maintain(double maintenance);
-    void infection(std::vector< int >* Phages,
-                   int numberOfHosts,
-                   double infectProbability,
-                   int* numberOfPhages);
-
-    Host()  {
-        R = 0;
-        P = 0;
-        remainingLysisTime = 1e6;
-        lysisTimeOfPhage = -1;
-        dead = false;
-        infected = false;
+    Host() {
+        Resource = 0.0;
+        reproProb = 0.0;
     }
 
-    Host(double initR, int maxR):
-        reproduction_limit(maxR), R(initR)  {
-        P = 0;
-        remainingLysisTime = 1e6;
-        lysisTimeOfPhage = -1;
-        dead = false;
-        infected = false;
+    void updateReproProb(double& totalProb, double R_r) {
+        totalProb -= reproProb;
+        if(Resource <= 0.0) {
+            reproProb = 0.0;
+        } else {
+            reproProb = exp(-0.5 * (R_r - Resource));
+        }
+        totalProb += reproProb;
     }
 
-    Host& operator=(const Host& other)  {
-        R = other.R;
-        P = other.P;
-        remainingLysisTime = other.remainingLysisTime;
-        lysisTimeOfPhage = other.lysisTimeOfPhage;
-        dead = other.dead;
-        infected = other.infected;
-        reproduction_limit = other.reproduction_limit;
+    void uptake(double& R, double H, double alpha) {
+        double uptake = alpha * R/(R+H);
+        Resource += uptake;
+        R -= uptake;
+    }
+
+    void maintenance(double c) {
+        Resource -= c;
+    }
+
+    Host& operator=(const Host& other) {
+        Resource = other.Resource;
+        reproProb = other.reproProb;
         return *this;
-    }
-
-    Host(const Host& other) {
-        R = other.R;
-        P = other.P;
-        remainingLysisTime = other.remainingLysisTime;
-        lysisTimeOfPhage = other.lysisTimeOfPhage;
-        dead = other.dead;
-        infected = other.infected;
-        reproduction_limit = other.reproduction_limit;
     }
 };
 
 
-void macstart(const char * argv[]);
-void writeOutput(const std::vector< Host >& HostPopulation,
-                 const std::vector< int > Phages,
-                 int t,
-                 int numberOfPhages,
-                 int numDivisions);
+struct Host_infected {
+    double Resource;
+    int numberPhages;
+    int lysisTime;
 
-
-void Host::updatePhages(double PhageGrowthRate,
-                        std::vector< int >* Phages,
-                        int* numberOfPhages)    {
-    // if there are no phages, don't update them
-    if (!infected) return;
-
-    remainingLysisTime--;
-    if (R >= PhageGrowthRate)    {
-        P += PhageGrowthRate;
-        R -= PhageGrowthRate;
+    Host_infected() {
+        Resource = 0.0;
+        numberPhages = 0.0;
+        lysisTime = 1e6;
     }
 
-    if (remainingLysisTime <= 0) {
-        // lysis!
-        dead = true;
-        for (int i = 0; i < static_cast<int>(P); ++i) {
-            int index = lysisTimeOfPhage;
-            if (uniform() < 0.01) {
-                if (uniform() < 0.5) {
-                    index++;
+    Host_infected& operator=(const Host_infected& other) {
+        Resource = other.Resource;
+        numberPhages = other.numberPhages;
+        lysisTime = other.lysisTime;
+        return *this;
+    }
+};
+
+
+
+
+int pickEvent(const std::vector<long double>& v, const double& sum) {
+    double r = uniform() * sum;
+    for(int i = 0; i < v.size(); ++i) {
+        r -= v[i];
+        if(r <= 0.0) return i;
+    }
+    return (int)v.size() -1;
+}
+
+int pickIndiv(const std::vector<Host>& v, const double& maxProb) {
+
+    while(1 == 1) {
+        int index = random_number((int)v.size());
+        double prob = v[index].reproProb / maxProb;
+        if(uniform() < prob) {
+            return index;
+        }
+    }
+
+    return (int)(v.size() -1);
+}
+
+bool compFn(const Host& A, const Host& B) {
+    return A.reproProb < B.reproProb;
+}
+
+
+void updateReproProb(const std::vector<Host>& v, double& maxProb) {
+    auto it = std::max_element(v.begin(), v.end(), compFn);
+    maxProb = (*it).reproProb;
+}
+
+template <typename T>
+double calculateSD(const std::vector<T>& v)
+{
+    double sum = std::accumulate(v.begin(), v.end(), 0.0);
+    double mean = sum / v.size();
+
+
+    double sq_sum = std::inner_product(v.begin(), v.end(), v.begin(), 0.0);
+    double stdev = std::sqrt(sq_sum / v.size() - mean * mean);
+    return stdev;
+}
+
+
+
+void doSimulation(const GetParams& Params, int repl)
+{
+    std::vector<Host> population;
+    std::vector<Host_infected> population_infected;
+
+    double totalReproProb = 0.0;
+    double maxReproProb = 0.0;
+
+
+    for(int i = 0; i < Params.initHostPopSize; ++i) {
+        Host temp = Host();
+        temp.reproSize = Params.reproductionSize;
+
+        temp.updateReproProb(totalReproProb, Params.reproductionSize);
+
+        if(temp.reproProb > maxReproProb) {
+            maxReproProb = temp.reproProb;
+        }
+        totalReproProb += temp.reproProb;
+        population.push_back(temp);
+    }
+
+    double t = 0.0;
+    double R = 0.0;
+
+
+    std::ofstream outFile("outFile.txt");
+
+    double prevT = 0.0;
+
+    double avgR = 0.0;
+    for(auto it = population.begin(); it != population.end(); ++it) {
+        avgR += (*it).Resource;
+    }
+    avgR = avgR / population.size();
+
+    //   outFile << t << "\t" << population.size() << "\t" << R << "\t" << avgR << "\n";
+
+
+
+    int numPhages = 0;
+
+    while(t < Params.maxTime) {
+        long double uptakeRate = population.size() * Params.alpha * R / (R+Params.H);
+        long double maintenanceRate = population.size() * Params.maintenanceCost;
+        long double reproRate  = totalReproProb;
+        long double infectRate = population.size() * numPhages * Params.omega;
+        long double phageDecay = numPhages * Params.gamma;
+        long double Inf_Hosts_Rate = (int)population_infected.size() * Params.lambda / Params.beta;
+        long double Inf_Hosts_maintenance = (int)population_infected.size() * Params.maintenanceCost;
+
+        long double totalRate = uptakeRate + maintenanceRate + reproRate + infectRate + phageDecay + Inf_Hosts_Rate + Inf_Hosts_maintenance;
+        double dt = Expon(totalRate);
+
+        std::vector<long double> rates = {maintenanceRate, uptakeRate, reproRate,infectRate, phageDecay, Inf_Hosts_Rate,Inf_Hosts_maintenance};
+        int event = pickEvent(rates, totalRate);
+
+        //update flow effects
+        R -= Params.D * R * dt;
+        R += Params.Inflow * Params.D * dt;
+        // remove individuals that flow out:
+        double lossProb = Params.D * dt;
+        if(lossProb > 1) {
+            break;
+        }
+
+        if(lossProb > 0 && !population.empty()) {
+            int loss = Binom((int)population.size(), lossProb);
+            
+            for(int i = 0; i < loss; ++i) {
+                int index = (int)random_number((int)population.size());
+                totalReproProb -= population[index].reproProb;
+
+                if(population[index].reproProb == maxReproProb) {
+                    population[index] = population.back();
+                    population.pop_back();
+                    updateReproProb(population,maxReproProb);
                 } else {
-                    index--;
+                    population[index] = population.back();
+                    population.pop_back();
                 }
             }
-            (*Phages)[index]++;
-            (*numberOfPhages)++;
-        }
-    }
-    return;
-}
-
-void Host::maintain(double maintenance) {
-    // float precision should be enough and is faster
-  //  double loss = maintenance;
-    double loss = maintenance; //  *  powf(static_cast<float>(1+R), 0.75f);
-    R -= loss;
-    if (R <= 0.0) {
-        dead = true;
-    }
-    return;
-}
-
-void Host::infection(std::vector< int >* Phages,
-                     int numberOfHosts,
-                     double infectProbability,
-                     int* numberOfPhages)  {
-    // only non-infected individuals can become infected
-    if (infected) return;
-    // dead individuals can't become infected
-    if (dead) return;
-
-    double probInfection = 1.0 * (*numberOfPhages) *
-                                 numberOfHosts *
-                                 infectProbability;
-
-    int lysisTime = -1;
-    if (uniform() < probInfection)  {
-        int r = 1;
-        // we don't need to draw a random number
-        // when there is a single phage left
-        if (*numberOfPhages > 1) {
-            r  += random_number(*numberOfPhages);
         }
 
-        for (std::size_t i = 0; i < Phages->size(); ++i) {
-            r -= (*Phages)[i];
-            if (r <= 0) {
-                lysisTime = static_cast<int>(i);
+        //infected hosts:
+        if(lossProb > 0 && !population_infected.empty()) {
+            int loss = Binom((int)population_infected.size(), lossProb);
+
+            for(int i = 0; i < loss; ++i) {
+                int index = (int)random_number((int)population_infected.size());
+                population_infected[index] = population_infected.back();
+                population_infected.pop_back();
+            }
+        }
+
+        if(numPhages > 0 && lossProb > 0) {
+            int loss = Binom((int)numPhages, lossProb);
+            numPhages -= loss;
+            if(numPhages < 0) {
+                numPhages = 0;
+            }
+        }
+
+        if((int)population.size() <= 0) {
+            break;
+        }
+
+        switch (event)
+        {
+            case 0: //maintenance
+            {
+                int index =random_number((int)population.size());
+                population[index].maintenance(Params.maintenanceCost);
+
+                if( population[index].reproProb == maxReproProb) {
+                    population[index].updateReproProb(totalReproProb,Params.reproductionSize);
+                    updateReproProb(population,maxReproProb);
+                } else {
+                    population[index].updateReproProb(totalReproProb,Params.reproductionSize);
+                }
+
+                if(population[index].Resource <= 0.0) {
+                    population[index] = population.back();
+                    population.pop_back();
+                }
                 break;
             }
-        }
-    }
+            case 1: //uptake
+            {
+                int index = random_number((int)population.size());
+                population[index].uptake(R, Params.H, Params.alpha);
+                population[index].updateReproProb(totalReproProb, Params.reproductionSize);
+                if(population[index].reproProb > maxReproProb) {
+                    maxReproProb = population[index].reproProb;
+                }
+                break;
+            }
+            case 2:
+            { //reproduction
+                int reproIndiv = pickIndiv(population, maxReproProb);
 
-    if (lysisTime > 0) {
-        infected = true;
-        lysisTimeOfPhage = lysisTime;
-        remainingLysisTime = lysisTime;
-        (*Phages)[lysisTime]--;
-        (*numberOfPhages)--;
-    }
-}
+                population[reproIndiv].Resource *= 0.5;
 
-void update(int HostPopulationSize,
-            const std::vector< Host >::iterator& it,
-            std::vector< Host >* toAdd,
-            double* Resources,
-            double maintenance,
-            double infectProbability,
-            std::vector< int >* Phages,
-            double PhageGrowthRate,
-            int* numberOfPhages,
-            int* numDivisions)    {
-    if ((*it).dead) return;
-
-
-    (*it).maintain(maintenance);
-    if ((*it).dead) return;
-
-    if ((*it).infected) {
-        (*it).updatePhages(PhageGrowthRate, Phages, numberOfPhages);
-        if ((*it).dead) return;
-    }
-
-    // also check if dead because he could have died
-    // in the function maintain (yes, this is a bit silly)
-    if (!(*it).infected && !(*it).dead) {
-        double uptake   = 1.0 * (*Resources) / (*Resources + HostPopulationSize);
-        (*it).R         += uptake;
-        *Resources       -= uptake;
-
-         double prob = expf(-1.0 * ((*it).reproduction_limit - (*it).R));
-
-         if (uniform() < prob)    {
-       // if ( (*it).R >= (*it).reproduction_limit) {
-            (*numDivisions)++;
-            (*it).R *= 0.5;
-            Host copy = (*it);
-            if (uniform() < 0.05) {
-                if(random_number(2) == 0) {
-                    copy.reproduction_limit++;//= Expon(1);
+                if( population[reproIndiv].reproProb == maxReproProb) {
+                    population[reproIndiv].updateReproProb(totalReproProb,Params.reproductionSize);
+                    updateReproProb(population,maxReproProb);
                 } else {
-                    copy.reproduction_limit--;//= Expon(1);
+                    population[reproIndiv].updateReproProb(totalReproProb,Params.reproductionSize);
                 }
 
-                if (copy.reproduction_limit < 1) copy.reproduction_limit = 1;
+
+                Host kid = population[reproIndiv];
+                totalReproProb += kid.reproProb;
+
+                population.push_back(kid);
+                break;
             }
-            toAdd->push_back(copy);
-        }
+            case 3: //infection
+            {
+                int index = random_number((int)population.size());
+                Host_infected new_infected_host;
+                new_infected_host.Resource = population[index].Resource;
+                population_infected.push_back(new_infected_host);
 
-        if ((*numberOfPhages) > 0) {
-            (*it).infection(Phages,
-                        HostPopulationSize,
-                        infectProbability,
-                        numberOfPhages);
-        }
-    }
-    return;
-}
+                population[index].updateReproProb(totalReproProb, Params.reproductionSize);
+                totalReproProb -= population[index].reproProb;
 
-// helper function to remove dead individuals from the population
-bool isDead(const Host& H) {
-    return H.dead;
-}
-
-void removeDeadAddKids(std::vector< Host >* HostPopulation,
-                       std::vector< Host >* toAdd) {
-    // now we first have to remove all the dead individuals
-    // and then add the born individuals
-    auto it = std::remove_if(HostPopulation->begin(), HostPopulation->end(),
-                             isDead);
-    HostPopulation->erase(it, HostPopulation->end());
-
-    if (!toAdd->empty()) {
-        HostPopulation->insert(HostPopulation->end(),
-                               toAdd->begin(), toAdd->end());
-    }
-}
-
-void decayPhages(std::vector< int >* Phages,
-                 const double& phageDecay,
-                 int* numberOfPhages) {
-    for (auto it = Phages->begin(); it != Phages->end(); ++it) {
-        if ((*it) >= 1) {
-            int loss = Binom((*it), phageDecay);
-            (*it) -= loss;
-            (*numberOfPhages) -= loss;
-            if ((*it) < 0) (*it) = 0;
-        }
-    }
-}
-
-// this is a custom shuffle function that uses the
-// Agner Fog random number generator
-// it is ~5x faster than the std::shuffle
-void customShuffle(std::vector< Host >::iterator first,
-                   int size) {
-    for(int i = size-1; i > 0; --i) {
-        std::swap(first[i], first[random_number(i)]);
-    }
-}
-
-
-void doSimulation(GetParams Params)
-{
-    std::random_device rdev;
-    unsigned int chosen_seed = rdev();
-
-    // all random numbers are generated
-    // using code from Agner Fog:  www.agner.org/random
-    set_seed(chosen_seed);
-
-    std::vector< Host > HostPopulation;
-    double Resources = 0;
-
-    // temporary vector containing newly born hosts
-    std::vector< Host > toAdd;
-
-    // vector of the histogram of Phages
-    std::vector < int > Phages(Params.reproductionSize * 4, 0);
-
-    // we initialize a population of N individuals
-    // that each have a minimum amount of resources already
-  //  HostPopulation.resize(Params.initHostPopSize, Host(Params.maintenanceCost * 10, Params.reproductionSize));
-    for(std::size_t i = 0; i < Params.initHostPopSize; ++i) {
- //       Host init = Host(Params.maintenanceCost*3, 5+random_number(Params.reproductionSize-5));
-        Host init = Host(Params.maintenanceCost + uniform(), Params.reproductionSize - 2 + random_number(4));
-        HostPopulation.push_back(init);
-    }
-
-
-    // clear the output files
-    std::ofstream outFile_temp("output.txt");
-    outFile_temp.close();
-
-    std::ofstream outFile_temp3("output_phages.txt");
-    outFile_temp3.close();
-
-    int numberOfPhages = 0;
-    // the maximum time is quite arbitrary
-    for (int t = 0; t < Params.maxTime; t++) {
-        // add resources
-        Resources += Params.Inflow;
-        toAdd.clear();
-        // allocate plenty of memory
-        // (this vector will hold all new additions to the population)
-        toAdd.reserve(HostPopulation.size());
-
-        // shuffle all individuals
-        customShuffle(HostPopulation.begin(), static_cast<int>(HostPopulation.size()));
-
-        int numDivisions = 0;
-
-        for (auto it = HostPopulation.begin();
-             it != HostPopulation.end(); ++it) {
-            update(static_cast<int>(HostPopulation.size()),
-                   it, &toAdd, &Resources,
-                   Params.maintenanceCost, Params.infectionProbability,
-                   &Phages, Params.phageGrowthRate, &numberOfPhages,
-                   &numDivisions);
-        }
-
-        removeDeadAddKids(&HostPopulation, &toAdd);
-
-        decayPhages(&Phages, Params.phageDecayRate, &numberOfPhages);
-
-        if (t == Params.infectionTime) {
-            int maxMaxr = 0;
-            for (std::size_t i = 0; i < HostPopulation.size(); ++i) {
-                if (HostPopulation[i].reproduction_limit > maxMaxr)
-                    maxMaxr = HostPopulation[i].reproduction_limit;
+                if(population[index].reproProb == maxReproProb) {
+                    population[index] = population.back();
+                    population.pop_back();
+                    updateReproProb(population,maxReproProb);
+                } else {
+                    population[index] = population.back();
+                    population.pop_back();
+                }
+                numPhages--; //one phage has infected and is lost from the population
+                break;
+            }
+            case 4: //phage decay
+            {
+                numPhages--;
+                break;
+            }
+            case 5: //update infected hosts
+            {
+                if(!population_infected.empty()) {
+                    int index = random_number((int)population_infected.size());
+                    if(population_infected[index].Resource >= Params.lambda) {
+                        population_infected[index].Resource -= Params.lambda;
+                        population_infected[index].numberPhages++;
+                    } else {
+                        //lysis!!!
+                        numPhages += population_infected[index].numberPhages;
+                        population_infected[index] = population_infected.back();
+                        population_infected.pop_back();
+                    }
+                }
+                break;
             }
 
-            for (int i = 1; i < maxMaxr; ++i)   {
-                int relNum = static_cast<int>(HostPopulation.size() / maxMaxr);
-                Phages[i] += relNum;
-                numberOfPhages += relNum;
+            case 6: //maintentance infected hosts
+            {
+                if(!population_infected.empty()) {
+                    int index = random_number((int)population_infected.size());
+                    population_infected[index].Resource -= Params.maintenanceCost;
+                    if(population_infected[index].Resource <= 0.0) {
+                        //lysis!
+                        numPhages += population_infected[index].numberPhages;
+                        population_infected[index] = population_infected.back();
+                        population_infected.pop_back();
+                    }
+
+                }
             }
         }
 
-        int stepSize = 100;
 
-        if (t % stepSize == 0) writeOutput(HostPopulation, Phages, t, numberOfPhages, numDivisions);
+        t += dt;
+        if(t >= Params.infectionTime && (t-dt) < Params.infectionTime) {
+            numPhages = Params.initPhagePopSize;
+        }
 
-        if (HostPopulation.size() < 1) {
+        double currentT = t;
+        if(currentT - prevT >= 0.05) {
+            double avgR = 0.0;
+            for(auto it = population.begin(); it != population.end(); ++it) {
+                avgR += (*it).Resource;
+            }
+            avgR = avgR / population.size();
+
+            double threshold = Params.lambda / (1-Params.beta * Params.gamma);
+
+            int N = (int)population.size();
+            double a = (Params.lambda + Params.maintenanceCost) * (Params.gamma + N * Params.omega);
+            double b = (N*Params.omega * (1 - Params.gamma * Params.beta));
+            double threshold2 = a/b;
+
+            outFile << Params.lambda << "\t" << Params.beta << "\t" << repl << "\t" << t << "\t" << population.size() << "\t" << numPhages << "\t" << R << "\t" << avgR  << "\t" << threshold << "\t" << population_infected.size() << "\t" << threshold2 << "\n";
+
+
+            outFile.flush();
+            prevT = currentT;
+            std::cout << t << "\t" << population.size() << "\t" << numPhages << "\t" << avgR << "\t" << threshold2 << "\n";
+        }
+
+
+        if(population.size() <= 0.0) {
             break;
         }
     }
-    
-    HostPopulation.clear();
-    Phages.clear();
+
+    avgR = 0.0;
+    for(auto it = population.begin(); it != population.end(); ++it) {
+        avgR += (*it).Resource;
+    }
+    avgR = avgR / population.size();
+
+    return;
 }
 
 
 int main(int argc, const char * argv[]) {
-    // apple specific code making sure that
-    // we are in the same directory as the executable
+
     macstart(argv);
+    GetParams P;
+    P.readFromIni("config.ini");
+    set_seed(P.seed);
 
-    GetParams Params;
-    Params.readFromIni("config.ini");
+    clock_t start2 = clock();
+    doSimulation(P,0);
+    clock_t end2 = clock();
+    double elapsed_secs2 = double(end2 - start2) / CLOCKS_PER_SEC;
+    std::cout << "that took: " << elapsed_secs2 << " seconds\n";
 
-    doSimulation(Params);
     return 0;
 }
-
-void writeOutput(const std::vector< Host >& HostPopulation,
-                 const std::vector< int > Phages,
-                 int t,
-                 int numberOfPhages,
-                 int numDivisions) {
-    int numberOfHosts = static_cast<int>(HostPopulation.size());
-
-    double meanResources = 0.0;
-    double meanMaxR = 0.0;
-    double minMaxr = 1e6;
-    double maxMaxr = -1;
-
-    std::vector< int > hostHistogram(1000,0);
-
-    for (auto it = HostPopulation.begin(); it != HostPopulation.end(); ++it) {
-        meanResources += (*it).R;
-        meanMaxR += (*it).reproduction_limit;
-        if ((*it).reproduction_limit > maxMaxr)
-            maxMaxr = (*it).reproduction_limit;
-        if ((*it).reproduction_limit < minMaxr)
-            minMaxr = (*it).reproduction_limit;
-
-        hostHistogram[ static_cast<int>((*it).reproduction_limit)]++;
-    }
-    meanResources = 1.0 * meanResources / HostPopulation.size();
-    meanMaxR = 1.0 * meanMaxR / HostPopulation.size();
-
-    std::cout << t << "\t"
-              << numberOfHosts << "\t"
-              << numberOfPhages << "\t"
-              << meanMaxR << "\n";
-
-    std::ofstream outFile;
-    outFile.open("output.txt", std::ios::app);
-    if (outFile.is_open())   {
-        outFile << t << "\t" << numberOfHosts << "\t"
-                             << meanResources << "\t"
-                             << numberOfPhages << "\t"
-                             << meanMaxR << "\t"
-                             << minMaxr << "\t"
-                             << maxMaxr << "\t"
-                             << numDivisions << "\n";
-    }
-    outFile.close();
-
-    if (numberOfPhages > 0) {
-        std::ofstream outFile_Phages("output_phages.txt", std::ios::app);
-        outFile_Phages << t << "\t";
-        for (std::size_t i = 0; i < Phages.size(); ++i) {
-            outFile_Phages << Phages[i] << "\t";
-        }
-        outFile_Phages << "\n";
-        outFile_Phages.close();
-    }
-
-
-    std::ofstream outFile_Hosts("output_hosts.txt",std::ios::app);
-    outFile_Hosts << t << "\t";
-    for (auto it  = hostHistogram.begin();
-        it != hostHistogram.end(); ++it)    {
-            outFile_Hosts << (*it) << "\t";
-    }
-    outFile_Hosts << "\n";
-    outFile_Hosts.close();
-}
-
 
 void macstart(const char * argv[])  {
     std::cout << "\n\n\n";
 #ifdef __APPLE__
-    {
-        char *dirsep = strrchr(argv[0], '/');
-        if (dirsep != NULL) *dirsep = 0;
-        int changeDir = chdir(argv[0]);
-        std::cout << "Changing Dir: " << changeDir << "\n";
-        std::string cwd = getcwd(NULL, 0);
-        std::cout << cwd << "\n";
-        std::cout << "Starting simulation\n";
-    }
+    char *dirsep = strrchr(argv[0], '/');
+    if ( dirsep != NULL ) *dirsep = 0;
+    int changeDir = chdir(argv[0]);
+    std::cout << "Changing Dir: " << changeDir << "\n";
+    std::string cwd = getcwd(NULL, 0);
+    std::cout << cwd << "\n";
+    std::cout << "Starting simulation\n";
 #endif
 }

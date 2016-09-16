@@ -26,12 +26,18 @@ class GetParams {
     // GLOBAL VARIABLES
     int seed;
     int initHostPopSize;
+    int initPhagePopSize;
     // size of host at which it reproduces
     double reproductionSize;
     double maintenanceCost;
-    double phageGrowthRate;
-    double infectionProbability;
-    double phageDecayRate;
+    double H;
+    double D;
+    double omega;
+    double gamma;
+    double lambda;
+    double beta;
+    double alpha;
+
 
     // influx of the chemostat
     double Inflow;
